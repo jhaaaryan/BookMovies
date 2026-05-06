@@ -13,8 +13,25 @@ import (
 func main() {
 	mux := http.NewServeMux()
 
+	// API routes
 	mux.HandleFunc("GET /movies", listMovies)
-	mux.Handle("GET /", http.FileServer(http.Dir("static")))
+
+	mux.HandleFunc("GET /movies/{movieID}/seats", bookingHandler().ListSeats)
+	mux.HandleFunc("POST /movies/{movieID}/seats/{seatID}/hold", bookingHandler().HoldSeat)
+	mux.HandleFunc("PUT /sessions/{sessionID}/confirm", bookingHandler().ConfirmSession)
+	mux.HandleFunc("DELETE /sessions/{sessionID}", bookingHandler().ReleaseSession)
+
+	// ✅ FIXED ROOT ROUTING (homepage + static files)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// If root → serve homepage
+		if r.URL.Path == "/" {
+			http.ServeFile(w, r, "static/index.html")
+			return
+		}
+
+		// otherwise serve static files
+		http.FileServer(http.Dir("static")).ServeHTTP(w, r)
+	})
 
 	redisAddr := mustGetEnv("REDIS_ADDR")
 	redisPassword := os.Getenv("REDIS_PASS")
@@ -23,12 +40,7 @@ func main() {
 
 	store := booking.NewRedisStore(redis.NewClient(redisAddr, redisPassword))
 	svc := booking.NewService(store)
-	bookingHandler := booking.NewHandler(svc)
-
-	mux.HandleFunc("GET /movies/{movieID}/seats", bookingHandler.ListSeats)
-	mux.HandleFunc("POST /movies/{movieID}/seats/{seatID}/hold", bookingHandler.HoldSeat)
-	mux.HandleFunc("PUT /sessions/{sessionID}/confirm", bookingHandler.ConfirmSession)
-	mux.HandleFunc("DELETE /sessions/{sessionID}", bookingHandler.ReleaseSession)
+	_ = svc // already used in handler
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -37,6 +49,17 @@ func main() {
 
 	log.Println("Server running on port:", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
+}
+
+// helper to avoid redeclaring handler multiple times
+func bookingHandler() *booking.Handler {
+	redisAddr := mustGetEnv("REDIS_ADDR")
+	redisPassword := os.Getenv("REDIS_PASS")
+
+	store := booking.NewRedisStore(redis.NewClient(redisAddr, redisPassword))
+	svc := booking.NewService(store)
+
+	return booking.NewHandler(svc)
 }
 
 func mustGetEnv(key string) string {
