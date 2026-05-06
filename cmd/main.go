@@ -13,35 +13,46 @@ import (
 func main() {
 	mux := http.NewServeMux()
 
-	// API routes
-	mux.HandleFunc("GET /movies", listMovies)
-
-	mux.HandleFunc("GET /movies/{movieID}/seats", bookingHandler().ListSeats)
-	mux.HandleFunc("POST /movies/{movieID}/seats/{seatID}/hold", bookingHandler().HoldSeat)
-	mux.HandleFunc("PUT /sessions/{sessionID}/confirm", bookingHandler().ConfirmSession)
-	mux.HandleFunc("DELETE /sessions/{sessionID}", bookingHandler().ReleaseSession)
-
-	// ✅ FIXED ROOT ROUTING (homepage + static files)
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// If root → serve homepage
-		if r.URL.Path == "/" {
-			http.ServeFile(w, r, "static/index.html")
-			return
-		}
-
-		// otherwise serve static files
-		http.FileServer(http.Dir("static")).ServeHTTP(w, r)
-	})
-
+	// -------------------------
+	// ENV CONFIG
+	// -------------------------
 	redisAddr := mustGetEnv("REDIS_ADDR")
 	redisPassword := os.Getenv("REDIS_PASS")
 
 	log.Println("Connecting to Redis at:", redisAddr)
 
+	// -------------------------
+	// INIT SERVICE ONCE (IMPORTANT FIX)
+	// -------------------------
 	store := booking.NewRedisStore(redis.NewClient(redisAddr, redisPassword))
 	svc := booking.NewService(store)
-	_ = svc // already used in handler
+	handler := booking.NewHandler(svc)
 
+	// -------------------------
+	// API ROUTES
+	// -------------------------
+	mux.HandleFunc("GET /movies", listMovies)
+
+	mux.HandleFunc("GET /movies/{movieID}/seats", handler.ListSeats)
+	mux.HandleFunc("POST /movies/{movieID}/seats/{seatID}/hold", handler.HoldSeat)
+	mux.HandleFunc("PUT /sessions/{sessionID}/confirm", handler.ConfirmSession)
+	mux.HandleFunc("DELETE /sessions/{sessionID}", handler.ReleaseSession)
+
+	// -------------------------
+	// STATIC + HOME ROUTING FIX
+	// -------------------------
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.ServeFile(w, r, "static/index.html")
+			return
+		}
+
+		http.FileServer(http.Dir("static")).ServeHTTP(w, r)
+	})
+
+	// -------------------------
+	// SERVER SETUP (Render safe)
+	// -------------------------
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -51,17 +62,9 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
 
-// helper to avoid redeclaring handler multiple times
-func bookingHandler() *booking.Handler {
-	redisAddr := mustGetEnv("REDIS_ADDR")
-	redisPassword := os.Getenv("REDIS_PASS")
-
-	store := booking.NewRedisStore(redis.NewClient(redisAddr, redisPassword))
-	svc := booking.NewService(store)
-
-	return booking.NewHandler(svc)
-}
-
+// -------------------------
+// HELPERS
+// -------------------------
 func mustGetEnv(key string) string {
 	val := os.Getenv(key)
 	if val == "" {
@@ -70,6 +73,9 @@ func mustGetEnv(key string) string {
 	return val
 }
 
+// -------------------------
+// MOCK DATA
+// -------------------------
 var movies = []movieResponse{
 	{ID: "inception", Title: "Inception", Rows: 5, SeatsPerRow: 8},
 	{ID: "the-prestige", Title: "The Prestige", Rows: 5, SeatsPerRow: 8},
